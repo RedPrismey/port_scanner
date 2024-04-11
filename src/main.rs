@@ -59,7 +59,6 @@ fn main() {
         };
 
         println!("Got network interface : {}", interface.name);
-        println!("{:#?}", interface);
     }
 }
 

@@ -15,50 +15,56 @@ struct Args {
     #[arg(short, long)]
     ports: String,
 
-    #[arg(short, long, default_value="default_interface")]
+    #[arg(short, long, default_value = "default_interface")]
     interface: String,
 }
 
+fn get_interface(interface_name: String) -> NetworkInterface {
+    let all_interfaces = interfaces();
+
+    if interface_name != "default_interface" {
+        let interface_opt: Option<&NetworkInterface> =
+            all_interfaces.iter().find(|e| e.name == interface_name);
+
+        let interface: NetworkInterface = match interface_opt {
+            Some(interface) => interface.to_owned(),
+            None => panic!("Interface not found : {}", interface_name),
+        };
+
+        println!("Got network interface : {}", interface.name);
+
+        interface
+    } else {
+        println!("No interface specified, trying to get the default one");
+
+        /*Try to find an interface that is up, isn't loopback and as an ip.
+         * If more than one interface could work, just takes the first one.*/
+        let interface_opt: Option<&NetworkInterface> = all_interfaces
+            .iter()
+            .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty());
+
+        let interface: NetworkInterface = match interface_opt {
+            Some(interface) => interface.to_owned(),
+            None => panic!("Could not find any network interface that are up and have an IP"),
+        };
+
+        println!("Got network interface : {}", interface.name);
+
+        interface
+    }
+}
+
 fn main() {
-/*---[Argument parsing]---*/
+    /*---[Argument parsing]---*/
     let args = Args::parse();
 
     let target = args.target;
     let ports = args.ports;
     let interface_name = args.interface;
-//TODO: add bad input handling
+    //TODO: add bad input handling
 
+    /*---[Interface handling]---*/
+    let interface = get_interface(interface_name);
 
-/*---[Interface handling]---*/
-    let all_interfaces = interfaces();
-
-    if interface_name != "default_interface" {
-        let interface: Option<&NetworkInterface> = all_interfaces
-            .iter()
-            .find(|e| e.name == interface_name);
-
-        let interface: &NetworkInterface = match interface {
-            Some(interface) => interface,
-            None => panic!("Interface not found : {}", interface_name),
-        };
-
-        println!("Got network interface : {}", interface_name);
-
-    } else {
-        println!("No interface specified, trying to get the default one");
-
-/*Try to find an interface that is up, isn't loopback and as an ip.
-* If more than one interface could work, just takes the first one.*/
-        let interface: Option<&NetworkInterface> = all_interfaces
-            .iter()
-            .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty());
-
-        let interface: &NetworkInterface = match interface {
-            Some(interface) => interface,
-            None => panic!("Could not find any network interface that are up and have an IP"),
-        };
-
-        println!("Got network interface : {}", interface.name);
-    }
+    println!("{:#?}", interface);
 }
-

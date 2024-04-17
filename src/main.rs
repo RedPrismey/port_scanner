@@ -1,15 +1,12 @@
 use clap::Parser;
 use pnet::datalink::{interfaces, NetworkInterface};
 
-//#![feature(addr_parse_ascii)]
-
 use std::net::IpAddr;
 
 /* ---[Argument Structure]---
 *
 * Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
 * The arguments with no default value are considered required.   */
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -27,24 +24,24 @@ fn main() {
     /*---[Argument parsing]---*/
     let args = Args::parse();
 
+    /*Get args from clap (program arhuments)*/
     let target = args.target;
     let port = args.port;
     let interface_name = args.interface;
-    //TODO: add bad input handling
+
+    /*Parse port and target into u16 and IpAddr*/
+    //TODO: better error handling
+    let port = port.trim().parse::<u16>().unwrap();
+    let ip: IpAddr = target.parse().unwrap();
 
     /*---[Interface handling]---*/
     /*If no interface name is supplied, try getting a default interface*/
     let interface = get_interface(interface_name);
-}
 
-fn argument_handling(target: String, port: String) -> (IpAddr, u16) {
-    //TODO: better error handling
-    let port = port.trim().parse::<u16>().unwrap();
-
-    //let ip = IpAddr::parse_ascii(target.as_bytes()).unwrap(); use this function when it becomes
-    //stable
-
-    (ip, port)
+    println!(
+        "Interface : {:#?}\nPort : {}\nIP : {:#?}",
+        interface, port, ip
+    );
 }
 
 fn get_interface(interface_name: String) -> NetworkInterface {

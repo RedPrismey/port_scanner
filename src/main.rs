@@ -3,11 +3,12 @@ use clap::Parser;
 use pnet::datalink::{interfaces, NetworkInterface};
 use pnet::packet::ip::IpNextHeaderProtocols::Tcp;
 use pnet::packet::tcp::{MutableTcpPacket, Tcp};
+use pnet::transport::{transport_channel, TransportChannelType::Layer4, TransportProtocol::Ipv4};
 use pnet::util::ipv4_checksum;
 
 use core::panic;
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 
 use rand::{thread_rng, Rng};
 
@@ -39,7 +40,7 @@ fn main() {
     /*Parse port and target into u16 and IpAddr*/
     //TODO: better error handling
     let port = port.trim().parse::<u16>().unwrap();
-    let ip: Ipv4Addr = target.parse().unwrap();
+    let ip: IpAddr = target.parse().unwrap();
 
     /*---[Interface handling]---*/
     /*If no interface name is supplied, try getting a default interface*/
@@ -53,42 +54,58 @@ fn main() {
     syn_scan(&interface, ip, port);
 }
 
-fn syn_scan(interface: &NetworkInterface, target_ip: Ipv4Addr, target_port: u16) {
+fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
+    /*---[Create the syn tcp package]---*/
     /*Get supplied interface's ip*/
     let source_ip = match interface.ips[0].ip() {
         IpAddr::V4(ip) => ip,
-        IpAddr::V6(_) => panic!("Source ip is ipv6, wich is not yet supported"),
+        IpAddr::V6(ip) => panic!("Source ip is ipv6, wich is not yet supported (ip : {})", ip),
     };
 
     let mut rng = thread_rng();
     let source_port: u16 = rng.gen_range(1024..65535);
 
-    let packet = Tcp {
-        source: source_port,
-        destination: target_port,
-        sequence: 0,
-        acknowledgement: 0,
-        data_offset: 5, // we have no options, so we can reduce it to the maximum
-        reserved: 0,
-        flags: 0b00000010, // for the syn flag (https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure)
-        window: 0,
-        /*we use the utils function, because it allows us to not yet build a TcpPacket*/
-        checksum: ipv4_checksum(&[0], 8, &[0], &source_ip, &target_ip, Tcp),
-        urgent_ptr: 0,
-        options: Vec::new(),
-        payload: Vec::new(),
+    let packet = match target_ip {
+        IpAddr::V4(target_ip) => {
+            Tcp {
+                /*(https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure)*/
+                source: source_port,
+                destination: target_port,
+                sequence: 0,
+                acknowledgement: 0,
+                data_offset: 5, // we have no options, so we can reduce it to the maximum
+                reserved: 0,
+                flags: 0b00000010, // for the syn flag
+                window: 0,
+                /*we use the utils function, because it allows us to not yet build a TcpPacket*/
+                checksum: ipv4_checksum(&[0], 8, &[0], &source_ip, &target_ip, Tcp),
+                urgent_ptr: 0,
+                options: Vec::new(),
+                payload: Vec::new(),
+            }
+        }
+        IpAddr::V6(ip) => panic!("Source ip is ipv6, wich is not yet supported (ip : {})", ip),
     };
 
     let mut buffer = [0; 20];
     let mut syn_packet = MutableTcpPacket::new(&mut buffer).unwrap();
     syn_packet.populate(&packet);
 
-    let syn_packet = syn_packet.to_immutable();
+    let syn_packet = syn_packet.consume_to_immutable();
 
-    println!(
-        "Target ip : {}, Source ip : {}, packet : {:#?}",
-        target_ip, source_ip, syn_packet
-    );
+    println!("syn packet : {:#?}", syn_packet);
+
+    /*---[Send packet]---*/
+    //the recieve buffer size is 4096, I'll see if I need to modify it later or not
+    let (mut tx, rx) = match transport_channel(4096, Layer4(Ipv4(Tcp))) {
+        Ok((tx, rx)) => (tx, rx),
+        Err(e) => panic!(
+            "An error occurred when creating the transport channel: {}",
+            e
+        ),
+    };
+
+    tx.send_to(syn_packet, target_ip).unwrap();
 }
 
 fn get_interface(interface_name: String) -> NetworkInterface {

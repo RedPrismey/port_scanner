@@ -3,6 +3,7 @@ use clap::Parser;
 use pnet::datalink::{interfaces, NetworkInterface};
 use pnet::packet::ip::IpNextHeaderProtocols::Tcp;
 use pnet::packet::tcp::{MutableTcpPacket, Tcp};
+use pnet::transport::tcp_packet_iter;
 use pnet::transport::{transport_channel, TransportChannelType::Layer4, TransportProtocol::Ipv4};
 use pnet::util::ipv4_checksum;
 
@@ -97,7 +98,7 @@ fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
 
     /*---[Send packet]---*/
     //the recieve buffer size is 4096, I'll see if I need to modify it later or not
-    let (mut tx, rx) = match transport_channel(4096, Layer4(Ipv4(Tcp))) {
+    let (mut tx, mut rx) = match transport_channel(4096, Layer4(Ipv4(Tcp))) {
         Ok((tx, rx)) => (tx, rx),
         Err(e) => panic!(
             "An error occurred when creating the transport channel: {}",
@@ -106,6 +107,14 @@ fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
     };
 
     tx.send_to(syn_packet, target_ip).unwrap();
+
+    let mut iter = tcp_packet_iter(&mut rx);
+    loop {
+        match iter.next() {
+            Ok((packet, addr)) => println!("packet : {:#?}, addr : {:#?}", packet, addr),
+            Err(e) => panic!("error reading packet : {}", e),
+        }
+    }
 }
 
 fn get_interface(interface_name: String) -> NetworkInterface {

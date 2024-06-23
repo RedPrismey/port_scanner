@@ -1,11 +1,17 @@
 use clap::Parser;
 
-use pnet::datalink::{interfaces, NetworkInterface};
-use pnet::packet::ip::IpNextHeaderProtocols::Tcp;
-use pnet::packet::tcp::{MutableTcpPacket, Tcp};
-use pnet::transport::tcp_packet_iter;
-use pnet::transport::{transport_channel, TransportChannelType::Layer4, TransportProtocol::Ipv4};
-use pnet::util::ipv4_checksum;
+use pnet::{
+    datalink::{interfaces, NetworkInterface},
+    packet::{
+        ip::IpNextHeaderProtocols::Tcp,
+        tcp::{ipv4_checksum, ipv6_checksum, MutableTcpPacket, Tcp, TcpFlags, TcpOption},
+        MutablePacket,
+    },
+    transport::{
+        tcp_packet_iter, transport_channel, TransportChannelType::Layer4, TransportProtocol::Ipv4,
+    },
+    util,
+};
 
 use core::panic;
 
@@ -55,46 +61,60 @@ fn main() {
     syn_scan(&interface, ip, port);
 }
 
+fn build_packet(
+    tcp_packet: &mut MutableTcpPacket,
+    source_ip: IpAddr,
+    target_ip: IpAddr,
+    source_port: u16,
+    target_port: u16,
+    syn: bool,
+) {
+    tcp_packet.set_source(source_port);
+    tcp_packet.set_destination(target_port);
+    tcp_packet.set_sequence(0);
+    tcp_packet.set_data_offset(8);
+
+    if syn {
+        tcp_packet.set_flags(TcpFlags::SYN);
+    } else {
+        tcp_packet.set_flags(TcpFlags::RST);
+    }
+
+    let checksum = match (source_ip, target_ip) {
+        (IpAddr::V4(src), IpAddr::V4(target)) => {
+            ipv4_checksum(&tcp_packet.to_immutable(), &src, &target)
+        }
+        (IpAddr::V6(src), IpAddr::V6(target)) => {
+            ipv6_checksum(&tcp_packet.to_immutable(), &src, &target)
+        }
+        _ => panic!("cant create socket in get_socket"),
+    };
+    tcp_packet.set_checksum(checksum);
+}
+
 fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
     /*---[Create the syn tcp package]---*/
     /*Get supplied interface's ip*/
-    let source_ip = match interface.ips[0].ip() {
-        IpAddr::V4(ip) => ip,
-        IpAddr::V6(ip) => panic!("Source ip is ipv6, wich is not yet supported (ip : {})", ip),
-    };
+    let source_ip = interface.ips[0].ip();
 
     let mut rng = thread_rng();
     let source_port: u16 = rng.gen_range(1024..65535);
 
-    let packet = match target_ip {
-        IpAddr::V4(target_ip) => {
-            Tcp {
-                /*(https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure)*/
-                source: source_port,
-                destination: target_port,
-                sequence: 0,
-                acknowledgement: 0,
-                data_offset: 5, // we have no options, so we can reduce it to the maximum
-                reserved: 0,
-                flags: 0b00000010, // for the syn flag
-                window: 0,
-                /*we use the utils function, because it allows us to not yet build a TcpPacket*/
-                checksum: ipv4_checksum(&[0], 8, &[0], &source_ip, &target_ip, Tcp),
-                urgent_ptr: 0,
-                options: Vec::new(),
-                payload: Vec::new(),
-            }
-        }
-        IpAddr::V6(ip) => panic!("Source ip is ipv6, wich is not yet supported (ip : {})", ip),
-    };
-
-    let mut buffer = [0; 20];
+    let mut buffer = [0; 128];
     let mut syn_packet = MutableTcpPacket::new(&mut buffer).unwrap();
-    syn_packet.populate(&packet);
+
+    build_packet(
+        &mut syn_packet,
+        source_ip,
+        target_ip,
+        source_port,
+        target_port,
+        true,
+    );
 
     let syn_packet = syn_packet.consume_to_immutable();
 
-    println!("syn packet : {:#?}", syn_packet);
+    println!("syn packet : {:#?}\n\n", syn_packet);
 
     /*---[Send packet]---*/
     //the recieve buffer size is 4096, I'll see if I need to modify it later or not
@@ -111,7 +131,7 @@ fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
     let mut iter = tcp_packet_iter(&mut rx);
     loop {
         match iter.next() {
-            Ok((packet, addr)) => println!("packet : {:#?}, addr : {:#?}", packet, addr),
+            Ok((packet, addr)) => println!("packet : {:#?}, addr : {:#?}\n", packet, addr),
             Err(e) => panic!("error reading packet : {}", e),
         }
     }

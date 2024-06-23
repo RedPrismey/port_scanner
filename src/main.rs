@@ -4,13 +4,11 @@ use pnet::{
     datalink::{interfaces, NetworkInterface},
     packet::{
         ip::IpNextHeaderProtocols::Tcp,
-        tcp::{ipv4_checksum, ipv6_checksum, MutableTcpPacket, Tcp, TcpFlags, TcpOption},
-        MutablePacket,
+        tcp::{ipv4_checksum, ipv6_checksum, MutableTcpPacket, Tcp},
     },
     transport::{
         tcp_packet_iter, transport_channel, TransportChannelType::Layer4, TransportProtocol::Ipv4,
     },
-    util,
 };
 
 use core::panic;
@@ -62,23 +60,31 @@ fn main() {
 }
 
 fn build_packet(
-    tcp_packet: &mut MutableTcpPacket,
+    mut buffer: &mut [u8],
     source_ip: IpAddr,
     target_ip: IpAddr,
     source_port: u16,
     target_port: u16,
-    syn: bool,
-) {
-    tcp_packet.set_source(source_port);
-    tcp_packet.set_destination(target_port);
-    tcp_packet.set_sequence(0);
-    tcp_packet.set_data_offset(8);
+) -> MutableTcpPacket {
+    let packet = Tcp {
+        /*(https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure)*/
+        source: source_port,
+        destination: target_port,
+        sequence: 0,
+        acknowledgement: 0,
+        data_offset: 5, // we have no options, so we can reduce the offset to the maximum
+        reserved: 0,
+        flags: 0b00000010, // syn flag
+        window: 0,
+        checksum: 0, // we'll set it after
+        urgent_ptr: 0,
+        options: Vec::new(),
+        payload: Vec::new(),
+    };
 
-    if syn {
-        tcp_packet.set_flags(TcpFlags::SYN);
-    } else {
-        tcp_packet.set_flags(TcpFlags::RST);
-    }
+    let mut tcp_packet = MutableTcpPacket::new(buffer).unwrap();
+
+    tcp_packet.populate(&packet);
 
     let checksum = match (source_ip, target_ip) {
         (IpAddr::V4(src), IpAddr::V4(target)) => {
@@ -87,32 +93,26 @@ fn build_packet(
         (IpAddr::V6(src), IpAddr::V6(target)) => {
             ipv6_checksum(&tcp_packet.to_immutable(), &src, &target)
         }
-        _ => panic!("cant create socket in get_socket"),
+        _ => panic!("Can't calculate checksum for two different type of ip addresses"),
     };
     tcp_packet.set_checksum(checksum);
+
+    tcp_packet
 }
 
 fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
-    /*---[Create the syn tcp package]---*/
     /*Get supplied interface's ip*/
     let source_ip = interface.ips[0].ip();
 
+    /*Generate the source port*/
     let mut rng = thread_rng();
     let source_port: u16 = rng.gen_range(1024..65535);
 
-    let mut buffer = [0; 128];
-    let mut syn_packet = MutableTcpPacket::new(&mut buffer).unwrap();
+    /*Create the tcp packet*/
+    let mut buffer = [0u8; 128];
 
-    build_packet(
-        &mut syn_packet,
-        source_ip,
-        target_ip,
-        source_port,
-        target_port,
-        true,
-    );
-
-    let syn_packet = syn_packet.consume_to_immutable();
+    let syn_packet = build_packet(&mut buffer, source_ip, target_ip, source_port, target_port)
+        .consume_to_immutable();
 
     println!("syn packet : {:#?}\n\n", syn_packet);
 

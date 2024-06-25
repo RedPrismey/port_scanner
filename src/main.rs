@@ -56,15 +56,17 @@ fn main() {
         interface, port, ip
     );
 
-    syn_scan(&interface, ip, port);
+    let result = syn_scan(&interface, ip, port);
+    println!("opened : {}", result);
 }
 
 fn build_packet(
-    mut buffer: &mut [u8],
+    buffer: &mut [u8],
     source_ip: IpAddr,
     target_ip: IpAddr,
     source_port: u16,
     target_port: u16,
+    syn: bool,
 ) -> MutableTcpPacket {
     let packet = Tcp {
         /*(https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure)*/
@@ -74,7 +76,11 @@ fn build_packet(
         acknowledgement: 0,
         data_offset: 5, // we have no options, so we can reduce the offset to the maximum
         reserved: 0,
-        flags: 0b00000010, // syn flag
+        flags: if syn {
+            0b00000010 // syn flag
+        } else {
+            0b00000100
+        },
         window: 0,
         checksum: 0, // we'll set it after
         urgent_ptr: 0,
@@ -82,7 +88,10 @@ fn build_packet(
         payload: Vec::new(),
     };
 
-    let mut tcp_packet = MutableTcpPacket::new(buffer).unwrap();
+    let mut tcp_packet = match MutableTcpPacket::new(buffer) {
+        Some(packet) => packet,
+        None => panic!("Error building packet : buffer is too small"),
+    };
 
     tcp_packet.populate(&packet);
 
@@ -100,7 +109,8 @@ fn build_packet(
     tcp_packet
 }
 
-fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
+fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) -> bool {
+    let mut opened = false;
     /*Get supplied interface's ip*/
     let source_ip = interface.ips[0].ip();
 
@@ -109,10 +119,17 @@ fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
     let source_port: u16 = rng.gen_range(1024..65535);
 
     /*Create the tcp packet*/
-    let mut buffer = [0u8; 128];
+    let mut buffer = [0u8; 20];
 
-    let syn_packet = build_packet(&mut buffer, source_ip, target_ip, source_port, target_port)
-        .consume_to_immutable();
+    let syn_packet = build_packet(
+        &mut buffer,
+        source_ip,
+        target_ip,
+        source_port,
+        target_port,
+        true,
+    )
+    .consume_to_immutable();
 
     println!("syn packet : {:#?}\n\n", syn_packet);
 
@@ -128,13 +145,46 @@ fn syn_scan(interface: &NetworkInterface, target_ip: IpAddr, target_port: u16) {
 
     tx.send_to(syn_packet, target_ip).unwrap();
 
+    /*---[Recieving packets]---*/
     let mut iter = tcp_packet_iter(&mut rx);
     loop {
         match iter.next() {
-            Ok((packet, addr)) => println!("packet : {:#?}, addr : {:#?}\n", packet, addr),
+            Ok((packet, addr)) => {
+                /*Checks if the packet is the response to our packet*/
+                if addr == target_ip && packet.get_source() == target_port {
+                    println!("packet : {:#?}, addr : {:#?}\n", packet, addr);
+                    /*Check if RST is set*/
+                    if packet.get_flags() & 0b00000100 == 0 {
+                        /*If no RST, the port is opened*/
+                        opened = true;
+                    }
+
+                    break;
+                }
+            }
             Err(e) => panic!("error reading packet : {}", e),
         }
     }
+
+    if opened {
+        /*---[Send RST packet]---*/
+        println!("sending RST packet");
+
+        let mut rst_buffer = [0u8; 20];
+        let rst_packet = build_packet(
+            &mut rst_buffer,
+            source_ip,
+            target_ip,
+            source_port,
+            target_port,
+            false,
+        )
+        .consume_to_immutable();
+
+        tx.send_to(rst_packet, target_ip).unwrap();
+    }
+
+    opened
 }
 
 fn get_interface(interface_name: String) -> NetworkInterface {

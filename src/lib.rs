@@ -1,5 +1,5 @@
 use clap::Parser;
-
+use core::panic;
 use pnet::{
     datalink::{interfaces, NetworkInterface},
     packet::{
@@ -10,11 +10,10 @@ use pnet::{
         tcp_packet_iter, transport_channel, TransportChannelType::Layer4, TransportProtocol::Ipv4,
     },
 };
-use std::net::IpAddr;
-
-use core::panic;
-
 use rand::{thread_rng, Rng};
+use std::error::Error;
+use std::net::IpAddr;
+use std::process;
 
 /* ---[Argument Structure]---*/
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
@@ -30,9 +29,6 @@ pub struct Args {
 
     #[arg(short, long, default_value = "default_interface")]
     interface: String,
-
-    #[arg(long, default_value_t = 5)]
-    timeout: u8,
 }
 
 /*---[Config structure]---*/
@@ -44,29 +40,34 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn build(args: Args) -> Config {
+    pub fn build(args: Args) -> Result<Config, Box<dyn Error>> {
         let target_ip = args.target;
         let target_port = args.port;
         let interface_name = args.interface;
 
         /*Parse port and target into u16 and IpAddr*/
-        //TODO: better error handling
-        let target_port: u16 = target_port.trim().parse().unwrap();
-        let target_ip: IpAddr = target_ip.parse().unwrap();
+        //TODO: Allow user to specify range of port or addresses
+        let target_port: u16 = match target_port.parse() {
+            Ok(value) => value,
+            // For custom error message
+            Err(e) => return Err(format!("Could not parse target port into u16 : {}", e).into()),
+        };
+        let target_ip: IpAddr = target_ip.parse()?;
 
         let interface = get_interface(interface_name);
 
         /*Get supplied interface's ip with the same type as the target address*/
+        //TODO: add checks for ip types
         let source_ip = match target_ip {
             IpAddr::V4(_) => interface.ips[0].ip(),
             IpAddr::V6(_) => interface.ips[1].ip(),
         };
 
-        Config {
+        Ok(Config {
             target_ip,
             target_port,
             source_ip,
-        }
+        })
     }
 }
 
@@ -83,8 +84,7 @@ pub fn syn_scan(config: &Config) -> bool {
 
     println!("syn packet : {:#?}\n\n", syn_packet);
 
-    /*---[Communication with the target]---*/
-    /*Creating the transport channels*/
+    /*---[Transport channel creation]---*/
     let (mut tx, mut rx) = match transport_channel(4096, Layer4(Ipv4(Tcp))) {
         Ok((tx, rx)) => (tx, rx),
         Err(e) => panic!(
@@ -95,7 +95,7 @@ pub fn syn_scan(config: &Config) -> bool {
 
     tx.send_to(syn_packet, config.target_ip).unwrap();
 
-    /*Recieving packets until we find a response of the target*/
+    /*---[Packet receiving]---*/
     let mut iter = tcp_packet_iter(&mut rx);
     //TODO: add a timeout
     loop {
@@ -117,8 +117,9 @@ pub fn syn_scan(config: &Config) -> bool {
         }
     }
 
+    /*---[Connection closing]---*/
+    /* If target port didn't try to connect back, we don't need to do anything*/
     if opened {
-        /*Closing the communication if the port is open*/
         println!("sending RST packet");
 
         let mut rst_buffer = [0u8; 20];
@@ -137,9 +138,9 @@ fn build_packet<'a>(
     source_port: u16,
     syn: bool,
 ) -> MutableTcpPacket<'a> {
-    /*Filling most of the tcp packet fields*/
+    /*---[TCP packet structure]---*/
     let packet = Tcp {
-        /*(https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure)*/
+        /* (https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure) */
         source: source_port,
         destination: config.target_port,
         sequence: 0,
@@ -147,22 +148,19 @@ fn build_packet<'a>(
         data_offset: 5, // we have no options, so we can reduce the offset to the maximum
         reserved: 0,
         flags: if syn {
-            0b00000010 // syn flag
+            0b00000010 // SYN flag
         } else {
-            0b00000100
+            0b00000100 // RST flag
         },
         window: 0,
-        checksum: 0, // we'll set it after
+        checksum: 0, // set after
         urgent_ptr: 0,
         options: Vec::new(),
         payload: Vec::new(),
     };
 
-    /*Creating the MutableTcpPacket (the one we'll be sending)*/
-    let mut tcp_packet = match MutableTcpPacket::new(buffer) {
-        Some(packet) => packet,
-        None => panic!("Error building packet : buffer is too small"),
-    };
+    /*---[On the wire TCP packet]---*/
+    let mut tcp_packet = MutableTcpPacket::new(buffer).unwrap();
 
     tcp_packet.populate(&packet);
 
@@ -173,7 +171,10 @@ fn build_packet<'a>(
         (IpAddr::V6(src), IpAddr::V6(target)) => {
             ipv6_checksum(&tcp_packet.to_immutable(), &src, &target)
         }
-        _ => panic!("Can't calculate checksum for two different type of ip addresses"),
+        _ => {
+            eprintln!("Can't calculate checksum for two different type of ip addresses");
+            process::exit(1);
+        }
     };
     tcp_packet.set_checksum(checksum);
 
@@ -189,7 +190,10 @@ fn get_interface(interface_name: String) -> NetworkInterface {
 
         let interface: NetworkInterface = match interface_opt {
             Some(interface) => interface.to_owned(),
-            None => panic!("Interface not found : {}", interface_name),
+            None => {
+                eprintln!("Interface {} not found", interface_name);
+                process::exit(1)
+            }
         };
 
         println!("Got network interface : {}", interface.name);
@@ -206,7 +210,10 @@ fn get_interface(interface_name: String) -> NetworkInterface {
 
         let interface: NetworkInterface = match interface_opt {
             Some(interface) => interface.to_owned(),
-            None => panic!("Could not find any network interface that are up and have an IP"),
+            None => {
+                eprintln!("Could not find any up network interface that has an IP");
+                process::exit(1);
+            }
         };
 
         println!("Got network interface : {}", interface.name);

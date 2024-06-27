@@ -45,7 +45,7 @@ impl Config {
         let target_port = args.port;
         let interface_name = args.interface;
 
-        /*Parse port and target into u16 and IpAddr*/
+        /* Parse port and target into u16 and IpAddr */
         //TODO: Allow user to specify range of port or addresses
         let target_port: u16 = match target_port.parse() {
             Ok(value) => value,
@@ -56,12 +56,8 @@ impl Config {
 
         let interface = get_interface(interface_name);
 
-        /*Get supplied interface's ip with the same type as the target address*/
-        //TODO: add checks for ip types
-        let source_ip = match target_ip {
-            IpAddr::V4(_) => interface.ips[0].ip(),
-            IpAddr::V6(_) => interface.ips[1].ip(),
-        };
+        /* Get supplied interface's ip with the same type as the target address */
+        let source_ip = get_source_ip(&interface, target_ip.is_ipv4());
 
         Ok(Config {
             target_ip,
@@ -130,6 +126,33 @@ pub fn syn_scan(config: &Config) -> bool {
     }
 
     opened
+}
+
+fn get_source_ip(interface: &NetworkInterface, v4: bool) -> IpAddr {
+    interface
+        .ips
+        .iter()
+        .find_map(|ip| match ip.ip() {
+            IpAddr::V4(addr) => {
+                match v4 {
+                    true => Some(IpAddr::V4(addr)),
+                    false => None,
+                }
+            }
+            IpAddr::V6(addr) => {
+                match !v4 {
+                    true => Some(IpAddr::V6(addr)),
+                    false => None,
+                }
+            }
+        })
+        .unwrap_or_else(|| {
+            eprintln!(
+                "Could not find any ip address for the network interface {} whos type matches with the target ip",
+                interface.name
+            );
+            process::exit(1);
+        })
 }
 
 fn build_packet<'a>(

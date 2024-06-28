@@ -22,13 +22,13 @@ use std::process;
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[arg(short, long)]
-    target: String,
+    pub target: String,
 
     #[arg(short, long)]
-    port: String,
+    pub port: String,
 
     #[arg(short, long, default_value = "default_interface")]
-    interface: String,
+    pub interface: String,
 }
 
 /*---[Config structure]---*/
@@ -66,6 +66,21 @@ impl Config {
         })
     }
 }
+
+/// Scans the port from the ip given in the config and returns true if the port is opened, false if
+/// not
+///
+/// # Examples
+///
+/// ```
+/// // Random config example (do not run any scan on ip you don't own)
+/// let config = Config {
+///     IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1)),
+///     8000,
+///     IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5))};
+///
+/// assert_eq!(syn_scan(&Config), false);
+/// ```
 
 pub fn syn_scan(config: &Config) -> bool {
     let mut opened = false;

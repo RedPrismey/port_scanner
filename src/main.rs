@@ -1,5 +1,5 @@
 use clap::Parser;
-use rust_scanner::{syn_scan, Args, Config};
+use rust_scanner::{run_syn_scan, Args, Config};
 use std::process;
 
 fn main() {
@@ -18,6 +18,6 @@ fn main() {
     println!("Port : {}\nIP : {:#?}\n\n", port, ip);
 
     /*---[Scan]---*/
-    let result = syn_scan(&config);
-    println!("opened : {}", result);
+    let result = run_syn_scan(&config);
+    println!("opened : {:#?}", result);
 }

@@ -49,7 +49,6 @@ impl Config {
         /* Parse target into IpAddr */
         //TODO: Allow user to specify range of port or addresses
         let target_ip: IpAddr = target_ip.parse()?;
-        println!("Ports to scan : {:#?}", target_ports);
 
         let interface = get_interface(interface_name);
 
@@ -64,10 +63,17 @@ impl Config {
     }
 }
 
-/// Scans the port from the ip given in the config and returns true if the port is opened, false if
-/// not
+pub fn run_syn_scan(config: &Config) -> Vec<bool> {
+    let mut result = Vec::new();
 
-pub fn syn_scan(config: &Config) -> bool {
+    for port in config.target_ports.iter() {
+        result.push(syn_scan(config, port));
+    }
+
+    result
+}
+
+pub fn syn_scan(config: &Config, target_port: &u16) -> bool {
     let mut opened = false;
 
     let mut rng = thread_rng();
@@ -75,8 +81,8 @@ pub fn syn_scan(config: &Config) -> bool {
 
     /*Create the tcp packet*/
     let mut syn_buffer = [0u8; 20];
-    let syn_packet =
-        build_packet(&mut syn_buffer, config, source_port, true).consume_to_immutable();
+    let syn_packet = build_packet(&mut syn_buffer, config, target_port, source_port, true)
+        .consume_to_immutable();
 
     println!("syn packet : {:#?}\n\n", syn_packet);
 
@@ -98,8 +104,7 @@ pub fn syn_scan(config: &Config) -> bool {
         match iter.next() {
             Ok((packet, addr)) => {
                 /*Checks if the packet is the response to our packet*/
-                //WARN: to change
-                if addr == config.target_ip && packet.get_source() == config.target_ports[0] {
+                if addr == config.target_ip && packet.get_source() == *target_port {
                     println!("packet : {:#?}, addr : {:#?}\n", packet, addr);
                     /*Check if RST is set*/
                     if packet.get_flags() & 0b00000100 == 0 {
@@ -120,8 +125,8 @@ pub fn syn_scan(config: &Config) -> bool {
         println!("sending RST packet");
 
         let mut rst_buffer = [0u8; 20];
-        let rst_packet =
-            build_packet(&mut rst_buffer, config, source_port, false).consume_to_immutable();
+        let rst_packet = build_packet(&mut rst_buffer, config, target_port, source_port, false)
+            .consume_to_immutable();
 
         tx.send_to(rst_packet, config.target_ip).unwrap();
     }
@@ -159,6 +164,7 @@ fn get_source_ip(interface: &NetworkInterface, v4: bool) -> IpAddr {
 fn build_packet<'a>(
     buffer: &'a mut [u8],
     config: &Config,
+    target_port: &u16,
     source_port: u16,
     syn: bool,
 ) -> MutableTcpPacket<'a> {
@@ -166,8 +172,7 @@ fn build_packet<'a>(
     let packet = Tcp {
         /* (https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure) */
         source: source_port,
-        //WARN: to change
-        destination: config.target_ports[0],
+        destination: *target_port,
         sequence: 0,
         acknowledgement: 0,
         data_offset: 5, // we have no options, so we can reduce the offset to the maximum

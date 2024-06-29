@@ -19,13 +19,14 @@ use std::process;
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
 * The arguments with no default value are considered required.*/
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about)]
+/// A simple syn port scanner in rust
 pub struct Args {
     #[arg(short, long)]
     pub target: String,
 
-    #[arg(short, long)]
-    pub port: String,
+    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+    pub ports: Vec<u16>,
 
     #[arg(short, long, default_value = "default_interface")]
     pub interface: String,
@@ -35,24 +36,20 @@ pub struct Args {
 /* Used to store the arguments we'll be passing arround a lot, like target port and target ip*/
 pub struct Config {
     pub target_ip: IpAddr,
-    pub target_port: u16,
+    pub target_ports: Vec<u16>,
     pub source_ip: IpAddr,
 }
 
 impl Config {
     pub fn build(args: Args) -> Result<Config, Box<dyn Error>> {
         let target_ip = args.target;
-        let target_port = args.port;
+        let target_ports = args.ports;
         let interface_name = args.interface;
 
-        /* Parse port and target into u16 and IpAddr */
+        /* Parse target into IpAddr */
         //TODO: Allow user to specify range of port or addresses
-        let target_port: u16 = match target_port.parse() {
-            Ok(value) => value,
-            // For custom error message
-            Err(e) => return Err(format!("Could not parse target port into u16 : {}", e).into()),
-        };
         let target_ip: IpAddr = target_ip.parse()?;
+        println!("Ports to scan : {:#?}", target_ports);
 
         let interface = get_interface(interface_name);
 
@@ -61,7 +58,7 @@ impl Config {
 
         Ok(Config {
             target_ip,
-            target_port,
+            target_ports,
             source_ip,
         })
     }
@@ -69,18 +66,6 @@ impl Config {
 
 /// Scans the port from the ip given in the config and returns true if the port is opened, false if
 /// not
-///
-/// # Examples
-///
-/// ```
-/// // Random config example (do not run any scan on ip you don't own)
-/// let config = Config {
-///     IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1)),
-///     8000,
-///     IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5))};
-///
-/// assert_eq!(syn_scan(&Config), false);
-/// ```
 
 pub fn syn_scan(config: &Config) -> bool {
     let mut opened = false;
@@ -113,7 +98,8 @@ pub fn syn_scan(config: &Config) -> bool {
         match iter.next() {
             Ok((packet, addr)) => {
                 /*Checks if the packet is the response to our packet*/
-                if addr == config.target_ip && packet.get_source() == config.target_port {
+                //WARN: to change
+                if addr == config.target_ip && packet.get_source() == config.target_ports[0] {
                     println!("packet : {:#?}, addr : {:#?}\n", packet, addr);
                     /*Check if RST is set*/
                     if packet.get_flags() & 0b00000100 == 0 {
@@ -124,7 +110,7 @@ pub fn syn_scan(config: &Config) -> bool {
                     break;
                 }
             }
-            Err(e) => panic!("error reading packet : {}", e),
+            Err(e) => println!("error reading packet : {}", e),
         }
     }
 
@@ -180,7 +166,8 @@ fn build_packet<'a>(
     let packet = Tcp {
         /* (https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure) */
         source: source_port,
-        destination: config.target_port,
+        //WARN: to change
+        destination: config.target_ports[0],
         sequence: 0,
         acknowledgement: 0,
         data_offset: 5, // we have no options, so we can reduce the offset to the maximum

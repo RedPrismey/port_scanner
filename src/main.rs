@@ -12,7 +12,8 @@ fn main() {
     });
 
     let ip = config.target_ip;
-    let port = config.target_port;
+    //WARN: to change
+    let port = config.target_ports[0];
 
     println!("Port : {}\nIP : {:#?}\n\n", port, ip);
 

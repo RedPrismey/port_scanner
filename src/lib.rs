@@ -11,9 +11,9 @@ use pnet::{
     },
 };
 use rand::{thread_rng, Rng};
-use std::error::Error;
 use std::net::IpAddr;
 use std::process;
+use std::{collections::HashMap, error::Error};
 
 /* ---[Argument Structure]---*/
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
@@ -32,22 +32,15 @@ pub struct Args {
     pub interface: String,
 }
 
-/*---[Config structure]---*/
-/* Used to store the arguments we'll be passing arround a lot, like target port and target ip*/
-pub struct Config {
+/*---[Config structures]---*/
+pub struct IpConfig {
     pub target_ip: IpAddr,
-    pub target_ports: Vec<u16>,
     pub source_ip: IpAddr,
 }
 
-impl Config {
-    pub fn build(args: Args) -> Result<Config, Box<dyn Error>> {
-        let target_ip = args.target;
-        let target_ports = args.ports;
-        let interface_name = args.interface;
-
+impl IpConfig {
+    pub fn build(target_ip: String, interface_name: String) -> Result<IpConfig, Box<dyn Error>> {
         /* Parse target into IpAddr */
-        //TODO: Allow user to specify range of port or addresses
         let target_ip: IpAddr = target_ip.parse()?;
 
         let interface = get_interface(interface_name);
@@ -55,36 +48,46 @@ impl Config {
         /* Get supplied interface's ip with the same type as the target address */
         let source_ip = get_source_ip(&interface, target_ip.is_ipv4());
 
-        Ok(Config {
+        Ok(IpConfig {
             target_ip,
-            target_ports,
             source_ip,
         })
     }
 }
 
-pub fn run_syn_scan(config: &Config) -> Vec<bool> {
-    let mut result = Vec::new();
-
-    for port in config.target_ports.iter() {
-        result.push(syn_scan(config, port));
-    }
-
-    result
+pub struct PortConfig {
+    pub target_port: u16,
+    pub source_port: u16,
 }
 
-pub fn syn_scan(config: &Config, target_port: &u16) -> bool {
-    let mut opened = false;
-
+pub fn run_syn_scan(ip_config: &IpConfig, target_ports: Vec<u16>) -> HashMap<String, bool> {
+    let mut results = HashMap::new();
     let mut rng = thread_rng();
-    let source_port: u16 = rng.gen_range(1024..65535);
+
+    for target_port in target_ports {
+        let source_port: u16 = rng.gen_range(1024..65535);
+
+        let port_config = PortConfig {
+            target_port,
+            source_port,
+        };
+
+        results.insert(
+            format!("{}:{}", ip_config.target_ip, target_port),
+            syn_scan(ip_config, &port_config),
+        );
+    }
+
+    results
+}
+
+pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
+    let mut opened = false;
 
     /*Create the tcp packet*/
     let mut syn_buffer = [0u8; 20];
-    let syn_packet = build_packet(&mut syn_buffer, config, target_port, source_port, true)
-        .consume_to_immutable();
-
-    println!("syn packet : {:#?}\n\n", syn_packet);
+    let syn_packet =
+        build_packet(&mut syn_buffer, ip_config, port_config, true).consume_to_immutable();
 
     /*---[Transport channel creation]---*/
     let (mut tx, mut rx) = match transport_channel(4096, Layer4(Ipv4(Tcp))) {
@@ -95,7 +98,7 @@ pub fn syn_scan(config: &Config, target_port: &u16) -> bool {
         ),
     };
 
-    tx.send_to(syn_packet, config.target_ip).unwrap();
+    tx.send_to(syn_packet, ip_config.target_ip).unwrap();
 
     /*---[Packet receiving]---*/
     let mut iter = tcp_packet_iter(&mut rx);
@@ -103,12 +106,9 @@ pub fn syn_scan(config: &Config, target_port: &u16) -> bool {
     loop {
         match iter.next() {
             Ok((packet, addr)) => {
-                /*Checks if the packet is the response to our packet*/
-                if addr == config.target_ip && packet.get_source() == *target_port {
-                    println!("packet : {:#?}, addr : {:#?}\n", packet, addr);
-                    /*Check if RST is set*/
+                if addr == ip_config.target_ip && packet.get_source() == port_config.target_port {
+                    /* Check if RST is set */
                     if packet.get_flags() & 0b00000100 == 0 {
-                        /*If no RST, the port is opened*/
                         opened = true;
                     }
 
@@ -125,10 +125,10 @@ pub fn syn_scan(config: &Config, target_port: &u16) -> bool {
         println!("sending RST packet");
 
         let mut rst_buffer = [0u8; 20];
-        let rst_packet = build_packet(&mut rst_buffer, config, target_port, source_port, false)
-            .consume_to_immutable();
+        let rst_packet =
+            build_packet(&mut rst_buffer, ip_config, port_config, false).consume_to_immutable();
 
-        tx.send_to(rst_packet, config.target_ip).unwrap();
+        tx.send_to(rst_packet, ip_config.target_ip).unwrap();
     }
 
     opened
@@ -163,16 +163,15 @@ fn get_source_ip(interface: &NetworkInterface, v4: bool) -> IpAddr {
 
 fn build_packet<'a>(
     buffer: &'a mut [u8],
-    config: &Config,
-    target_port: &u16,
-    source_port: u16,
+    ip_config: &IpConfig,
+    port_config: &PortConfig,
     syn: bool,
 ) -> MutableTcpPacket<'a> {
     /*---[TCP packet structure]---*/
     let packet = Tcp {
         /* (https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure) */
-        source: source_port,
-        destination: *target_port,
+        source: port_config.source_port,
+        destination: port_config.target_port,
         sequence: 0,
         acknowledgement: 0,
         data_offset: 5, // we have no options, so we can reduce the offset to the maximum
@@ -194,7 +193,7 @@ fn build_packet<'a>(
 
     tcp_packet.populate(&packet);
 
-    let checksum = match (config.source_ip, config.target_ip) {
+    let checksum = match (ip_config.source_ip, ip_config.target_ip) {
         (IpAddr::V4(src), IpAddr::V4(target)) => {
             ipv4_checksum(&tcp_packet.to_immutable(), &src, &target)
         }

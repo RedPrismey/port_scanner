@@ -11,25 +11,49 @@ use pnet::{
     },
 };
 use rand::{thread_rng, Rng};
-use std::net::IpAddr;
+use std::collections::HashMap;
 use std::process;
-use std::{collections::HashMap, error::Error};
+use std::{net::IpAddr, num::ParseIntError};
 
 /* ---[Argument Structure]---*/
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
-* The arguments with no default value are considered required.*/
+*  The arguments with no default value are considered required.*/
 #[derive(Parser, Debug)]
 #[command(version, about)]
 /// A simple syn port scanner in rust
 pub struct Args {
+    #[arg(short, long, num_args = 1.., value_delimiter = ' ')]
+    pub targets: Vec<IpAddr>,
+
+    #[arg(short,long,  value_parser = port_parser, num_args = 1.., value_delimiter = ' ')]
+    pub ports: Vec<Vec<u16>>,
+
     #[arg(short, long)]
-    pub target: String,
+    pub interface: Option<String>,
+}
 
-    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
-    pub ports: Vec<u16>,
+fn port_parser(s: &str) -> Result<Vec<u16>, ParseIntError> {
+    if s.contains('-') {
+        let mut parts = s.split('-');
 
-    #[arg(short, long, default_value = "default_interface")]
-    pub interface: String,
+        let first = match parts.next().unwrap().parse::<u16>() {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        };
+
+        let last = match parts.next().unwrap().parse::<u16>() {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        };
+
+        Ok((first..last).collect())
+    } else {
+        let parse = s.parse::<u16>();
+        match parse {
+            Ok(port) => Ok(vec![port]),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /*---[Config structures]---*/
@@ -38,44 +62,41 @@ pub struct IpConfig {
     pub source_ip: IpAddr,
 }
 
-impl IpConfig {
-    pub fn build(target_ip: String, interface_name: String) -> Result<IpConfig, Box<dyn Error>> {
-        /* Parse target into IpAddr */
-        let target_ip: IpAddr = target_ip.parse()?;
-
-        let interface = get_interface(interface_name);
-
-        /* Get supplied interface's ip with the same type as the target address */
-        let source_ip = get_source_ip(&interface, target_ip.is_ipv4());
-
-        Ok(IpConfig {
-            target_ip,
-            source_ip,
-        })
-    }
-}
-
 pub struct PortConfig {
     pub target_port: u16,
     pub source_port: u16,
 }
 
-pub fn run_syn_scan(ip_config: &IpConfig, target_ports: Vec<u16>) -> HashMap<String, bool> {
+pub fn run_syn_scan(
+    target_ips: Vec<IpAddr>,
+    target_ports: Vec<u16>,
+    interface: &NetworkInterface,
+) -> HashMap<String, bool> {
     let mut results = HashMap::new();
     let mut rng = thread_rng();
 
-    for target_port in target_ports {
-        let source_port: u16 = rng.gen_range(1024..65535);
+    for target_ip in target_ips {
+        let source_ip = get_source_ip(interface, target_ip.is_ipv4());
 
-        let port_config = PortConfig {
-            target_port,
-            source_port,
+        let ip_config = IpConfig {
+            target_ip,
+            source_ip,
         };
 
-        results.insert(
-            format!("{}:{}", ip_config.target_ip, target_port),
-            syn_scan(ip_config, &port_config),
-        );
+        for target_port in &target_ports {
+            let source_port: u16 = rng.gen_range(1024..65535);
+
+            let port_config = PortConfig {
+                target_port: *target_port,
+                source_port,
+            };
+
+            let target = format!("{}:{}", target_ip, target_port);
+            let result = syn_scan(&ip_config, &port_config);
+            println!("{target} : {result} ");
+
+            results.insert(target, result);
+        }
     }
 
     results
@@ -210,43 +231,46 @@ fn build_packet<'a>(
     tcp_packet
 }
 
-fn get_interface(interface_name: String) -> NetworkInterface {
+pub fn get_interface(interface_name: Option<String>) -> NetworkInterface {
     let all_interfaces = interfaces();
 
-    if interface_name != "default_interface" {
-        let interface_opt: Option<&NetworkInterface> =
-            all_interfaces.iter().find(|e| e.name == interface_name);
+    match interface_name {
+        Some(name) => {
+            let interface_opt: Option<&NetworkInterface> =
+                all_interfaces.iter().find(|e| e.name == name);
 
-        let interface: NetworkInterface = match interface_opt {
-            Some(interface) => interface.to_owned(),
-            None => {
-                eprintln!("Interface {} not found", interface_name);
-                process::exit(1)
-            }
-        };
+            let interface: NetworkInterface = match interface_opt {
+                Some(interface) => interface.to_owned(),
+                None => {
+                    eprintln!("Interface {} not found", name);
+                    process::exit(1)
+                }
+            };
 
-        println!("Got network interface : {}", interface.name);
+            println!("Got network interface : {}", interface.name);
 
-        interface
-    } else {
-        println!("No interface specified, trying to get the default one");
+            interface
+        }
+        None => {
+            println!("No interface specified, trying to get the default one");
 
-        /*Try to find an interface that is up, isn't loopback and as an ip.
-         * If more than one interface could work, just takes the first one.*/
-        let interface_opt: Option<&NetworkInterface> = all_interfaces
-            .iter()
-            .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty());
+            /*Try to find an interface that is up, isn't loopback and as an ip.
+             * If more than one interface could work, just takes the first one.*/
+            let interface_opt: Option<&NetworkInterface> = all_interfaces
+                .iter()
+                .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty());
 
-        let interface: NetworkInterface = match interface_opt {
-            Some(interface) => interface.to_owned(),
-            None => {
-                eprintln!("Could not find any up network interface that has an IP");
-                process::exit(1);
-            }
-        };
+            let interface: NetworkInterface = match interface_opt {
+                Some(interface) => interface.to_owned(),
+                None => {
+                    eprintln!("Could not find any up network interface that has an IP");
+                    process::exit(1);
+                }
+            };
 
-        println!("Got network interface : {}", interface.name);
+            println!("Got network interface : {}", interface.name);
 
-        interface
+            interface
+        }
     }
 }

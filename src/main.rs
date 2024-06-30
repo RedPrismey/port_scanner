@@ -1,23 +1,19 @@
 use clap::Parser;
-use rust_scanner::{run_syn_scan, Args, IpConfig};
-use std::process;
+use rust_scanner::{get_interface, run_syn_scan, Args};
 
 fn main() {
     /*---[Argument parsing]---*/
     let args = Args::parse();
 
-    let target_ports = args.ports;
+    let target_ports = args.ports.concat();
 
-    let ip_config = IpConfig::build(args.target, args.interface).unwrap_or_else(|err| {
-        eprintln!("Problem parsing arguments: {err}");
-        process::exit(1);
-    });
+    let target_ips = args.targets;
 
-    let target_ip = ip_config.target_ip;
+    let interface = get_interface(args.interface);
 
-    println!("Ports : {:#?}\nIP : {:#?}\n\n", target_ports, target_ip);
+    println!("Ports : {:#?}\nIP : {:#?}\n\n", target_ports, target_ips);
 
     /*---[Scan]---*/
-    let result = run_syn_scan(&ip_config, target_ports);
-    println!("opened : {:#?}", result);
+    let _result = run_syn_scan(target_ips, target_ports, &interface);
+    //println!("opened : {:#?}", result);
 }

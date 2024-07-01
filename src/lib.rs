@@ -140,18 +140,6 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
         }
     }
 
-    /*---[Connection closing]---*/
-    /* If target port didn't try to connect back, we don't need to do anything*/
-    if opened {
-        println!("sending RST packet");
-
-        let mut rst_buffer = [0u8; 20];
-        let rst_packet =
-            build_packet(&mut rst_buffer, ip_config, port_config, false).consume_to_immutable();
-
-        tx.send_to(rst_packet, ip_config.target_ip).unwrap();
-    }
-
     opened
 }
 

@@ -143,23 +143,18 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
     opened
 }
 
-fn get_source_ip(interface: &NetworkInterface, v4: bool) -> IpAddr {
+fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {
     interface
         .ips
         .iter()
         .find_map(|ip| match ip.ip() {
-            IpAddr::V4(addr) => {
-                match v4 {
-                    true => Some(IpAddr::V4(addr)),
-                    false => None,
-                }
+            IpAddr::V4(addr) if is_v4 => {
+                Some(IpAddr::V4(addr))
             }
-            IpAddr::V6(addr) => {
-                match !v4 {
-                    true => Some(IpAddr::V6(addr)),
-                    false => None,
-                }
+            IpAddr::V6(addr) if !is_v4 => {
+                Some(IpAddr::V6(addr))
             }
+            _ => None,
         })
         .unwrap_or_else(|| {
             eprintln!(

@@ -147,22 +147,21 @@ fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {
     interface
         .ips
         .iter()
-        .find_map(|ip| match ip.ip() {
+        .map(|ip| match ip.ip() {
             IpAddr::V4(addr) if is_v4 => {
-                Some(IpAddr::V4(addr))
+                IpAddr::V4(addr)
             }
             IpAddr::V6(addr) if !is_v4 => {
-                Some(IpAddr::V6(addr))
+                IpAddr::V6(addr)
             }
-            _ => None,
-        })
-        .unwrap_or_else(|| {
-            eprintln!(
-                "Could not find any ip address for the network interface {} whos type matches with the target ip",
-                interface.name
-            );
-            process::exit(1);
-        })
+            _ => {
+                eprintln!(
+                    "Could not find any ip address for the network interface {} whos type matches with the target ip",
+                    interface.name
+                );
+                process::exit(1);
+            }
+        }).next().unwrap()
 }
 
 fn build_packet<'a>(

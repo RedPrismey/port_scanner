@@ -1,7 +1,7 @@
 use clap::Parser;
 use core::panic;
 use pnet::{
-    datalink::{interfaces, NetworkInterface},
+    datalink::NetworkInterface,
     packet::{
         ip::IpNextHeaderProtocols::Tcp,
         tcp::{ipv4_checksum, ipv6_checksum, MutableTcpPacket, Tcp},
@@ -16,13 +16,16 @@ use std::process;
 use std::{net::IpAddr, num::ParseIntError};
 
 /* ---[Argument Structure]---*/
+
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
 *  The arguments with no default value are considered required.*/
 #[derive(Parser, Debug)]
 #[command(version, about)]
+// Description for the help menu of clap below
 /// A simple syn port scanner in rust
 pub struct Args {
     #[arg(short, long, num_args = 1.., value_delimiter = ' ')]
+    //TODO: add support for ip ranges
     pub targets: Vec<IpAddr>,
 
     #[arg(short,long,  value_parser = port_parser, num_args = 1.., value_delimiter = ' ')]
@@ -147,23 +150,23 @@ fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {
     interface
         .ips
         .iter()
-        .map(|ip| match ip.ip() {
+        .find_map(|ip| match ip.ip() {
             IpAddr::V4(addr) if is_v4 => {
-                IpAddr::V4(addr)
+                Some(IpAddr::V4(addr))
             }
             IpAddr::V6(addr) if !is_v4 => {
-                IpAddr::V6(addr)
+                Some(IpAddr::V6(addr))
             }
-            _ => {
-                eprintln!(
-                    "Could not find any ip address for the network interface {} whos type matches with the target ip",
-                    interface.name
-                );
-                process::exit(1);
-            }
-        }).next().unwrap()
+            _ => None
+        }).unwrap_or_else(|| {
+            eprintln!(
+                "Could not find any ip address for the network interface {} whos type matches with the target ip",
+                interface.name
+            );
+            process::exit(1);})
 }
 
+//TODO: add a test
 fn build_packet<'a>(
     buffer: &'a mut [u8],
     ip_config: &IpConfig,
@@ -213,9 +216,10 @@ fn build_packet<'a>(
     tcp_packet
 }
 
-pub fn get_interface(interface_name: Option<String>) -> NetworkInterface {
-    let all_interfaces = interfaces();
-
+pub fn get_interface(
+    interface_name: Option<String>,
+    all_interfaces: Vec<NetworkInterface>,
+) -> NetworkInterface {
     match interface_name {
         Some(name) => {
             let interface_opt: Option<&NetworkInterface> =
@@ -256,3 +260,6 @@ pub fn get_interface(interface_name: Option<String>) -> NetworkInterface {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

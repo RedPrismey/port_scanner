@@ -32,7 +32,7 @@ fn source_ip_v6() {
     let is_v4 = false;
     let ips = vec![
         IpNetwork::V6(Ipv6Network::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 0).unwrap()),
-        IpNetwork::V4(Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap()),
+        IpNetwork::V4(Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap()),
         IpNetwork::V6(Ipv6Network::new(Ipv6Addr::new(0, 1, 0, 0, 0, 0, 0, 1), 0).unwrap()),
     ];
 
@@ -66,7 +66,7 @@ fn get_interface_default() {
             index: 2,
             mac: None,
             ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
+                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
             )],
             flags: 0, // not running flag
         },
@@ -76,7 +76,7 @@ fn get_interface_default() {
             index: 2,
             mac: None,
             ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
+                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
             )],
             flags: 9, // Loopback + running flag
         },
@@ -86,7 +86,7 @@ fn get_interface_default() {
             index: 0,
             mac: None,
             ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
+                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
             )],
             flags: 1,
         },
@@ -113,7 +113,7 @@ fn get_interface_choosing() {
             index: 2,
             mac: None,
             ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
+                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
             )],
             flags: 0, // not up flag
         },
@@ -123,7 +123,7 @@ fn get_interface_choosing() {
             index: 2,
             mac: None,
             ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
+                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
             )],
             flags: 9, // Loopback + running flag
         },
@@ -133,7 +133,7 @@ fn get_interface_choosing() {
             index: 0,
             mac: None,
             ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
+                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
             )],
             flags: 1,
         },

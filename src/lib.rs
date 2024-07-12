@@ -16,7 +16,6 @@ use std::process;
 use std::{net::IpAddr, num::ParseIntError};
 
 /* ---[Argument Structure]---*/
-
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
 *  The arguments with no default value are considered required.*/
 #[derive(Parser, Debug)]
@@ -28,7 +27,7 @@ pub struct Args {
     //TODO: add support for ip ranges
     pub targets: Vec<IpAddr>,
 
-    #[arg(short,long,  value_parser = port_parser, num_args = 1.., value_delimiter = ' ')]
+    #[arg(short, long, value_parser = port_parser, num_args = 1.., value_delimiter = ' ')]
     pub ports: Vec<Vec<u16>>,
 
     #[arg(short, long)]
@@ -37,22 +36,18 @@ pub struct Args {
 
 fn port_parser(s: &str) -> Result<Vec<u16>, ParseIntError> {
     if s.contains('-') {
+        /* For parsing port range (like 80-220) */
         let mut parts = s.split('-');
 
-        let first = match parts.next().unwrap().parse::<u16>() {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
-
-        let last = match parts.next().unwrap().parse::<u16>() {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let first: u16 = parts.next().unwrap().parse()?;
+        let last: u16 = parts.next().unwrap().parse()?;
 
         Ok((first..last).collect())
     } else {
-        let parse = s.parse::<u16>();
-        match parse {
+        /* If there's only one port, return it as a Vec containing this one port */
+        let port = s.parse::<u16>();
+
+        match port {
             Ok(port) => Ok(vec![port]),
             Err(e) => Err(e),
         }
@@ -61,13 +56,13 @@ fn port_parser(s: &str) -> Result<Vec<u16>, ParseIntError> {
 
 /*---[Config structures]---*/
 pub struct IpConfig {
-    pub target_ip: IpAddr,
-    pub source_ip: IpAddr,
+    pub target: IpAddr,
+    pub source: IpAddr,
 }
 
 pub struct PortConfig {
-    pub target_port: u16,
-    pub source_port: u16,
+    pub target: u16,
+    pub source: u16,
 }
 
 pub fn run_syn_scan(
@@ -76,22 +71,20 @@ pub fn run_syn_scan(
     interface: &NetworkInterface,
 ) -> HashMap<String, bool> {
     let mut results = HashMap::new();
+
+    /* for the source port generation */
     let mut rng = thread_rng();
 
     for target_ip in target_ips {
-        let source_ip = get_source_ip(interface, target_ip.is_ipv4());
-
         let ip_config = IpConfig {
-            target_ip,
-            source_ip,
+            target: target_ip,
+            source: get_source_ip(interface, target_ip.is_ipv4()),
         };
 
         for target_port in &target_ports {
-            let source_port: u16 = rng.gen_range(1024..65535);
-
             let port_config = PortConfig {
-                target_port: *target_port,
-                source_port,
+                target: *target_port,
+                source: rng.gen_range(1024..65535),
             };
 
             let target = format!("{}:{}", target_ip, target_port);
@@ -109,9 +102,8 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
     let mut opened = false;
 
     /*Create the tcp packet*/
-    let mut syn_buffer = [0u8; 20];
-    let syn_packet =
-        build_packet(&mut syn_buffer, ip_config, port_config, true).consume_to_immutable();
+    let mut syn_buffer = [0; 20];
+    let syn_packet = build_packet(&mut syn_buffer, ip_config, port_config).consume_to_immutable();
 
     /*---[Transport channel creation]---*/
     let (mut tx, mut rx) = match transport_channel(4096, Layer4(Ipv4(Tcp))) {
@@ -122,7 +114,7 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
         ),
     };
 
-    tx.send_to(syn_packet, ip_config.target_ip).unwrap();
+    tx.send_to(syn_packet, ip_config.target).unwrap();
 
     /*---[Packet receiving]---*/
     let mut iter = tcp_packet_iter(&mut rx);
@@ -130,12 +122,11 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
     loop {
         match iter.next() {
             Ok((packet, addr)) => {
-                if addr == ip_config.target_ip && packet.get_source() == port_config.target_port {
+                if addr == ip_config.target && packet.get_source() == port_config.target {
                     /* Check if RST is set */
                     if packet.get_flags() & 0b00000100 == 0 {
                         opened = true;
                     }
-
                     break;
                 }
             }
@@ -166,27 +157,21 @@ fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {
             process::exit(1);})
 }
 
-//TODO: add a test
 fn build_packet<'a>(
     buffer: &'a mut [u8],
     ip_config: &IpConfig,
     port_config: &PortConfig,
-    syn: bool,
 ) -> MutableTcpPacket<'a> {
     /*---[TCP packet structure]---*/
     let packet = Tcp {
         /* (https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_segment_structure) */
-        source: port_config.source_port,
-        destination: port_config.target_port,
+        source: port_config.source,
+        destination: port_config.target,
         sequence: 0,
         acknowledgement: 0,
         data_offset: 5, // we have no options, so we can reduce the offset to the maximum
         reserved: 0,
-        flags: if syn {
-            0b00000010 // SYN flag
-        } else {
-            0b00000100 // RST flag
-        },
+        flags: 0b00000010, // SYN flag
         window: 0,
         checksum: 0, // set after
         urgent_ptr: 0,
@@ -195,11 +180,12 @@ fn build_packet<'a>(
     };
 
     /*---[On the wire TCP packet]---*/
+    assert!(buffer.len() >= 20);
     let mut tcp_packet = MutableTcpPacket::new(buffer).unwrap();
 
     tcp_packet.populate(&packet);
 
-    let checksum = match (ip_config.source_ip, ip_config.target_ip) {
+    let checksum = match (ip_config.source, ip_config.target) {
         (IpAddr::V4(src), IpAddr::V4(target)) => {
             ipv4_checksum(&tcp_packet.to_immutable(), &src, &target)
         }
@@ -221,6 +207,7 @@ pub fn get_interface(
     all_interfaces: Vec<NetworkInterface>,
 ) -> NetworkInterface {
     match interface_name {
+        /*---[Interface name supplied]---*/
         Some(name) => {
             let interface_opt: Option<&NetworkInterface> =
                 all_interfaces.iter().find(|e| e.name == name);
@@ -234,29 +221,26 @@ pub fn get_interface(
             };
 
             println!("Got network interface : {}", interface.name);
-
             interface
         }
+
+        /*---[No interface name supplied]---*/
         None => {
             println!("No interface specified, trying to get the default one");
 
             /*Try to find an interface that is up, isn't loopback and as an ip.
              * If more than one interface could work, just takes the first one.*/
-            let interface_opt: Option<&NetworkInterface> = all_interfaces
+            let interface = all_interfaces
                 .iter()
-                .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty());
-
-            let interface: NetworkInterface = match interface_opt {
-                Some(interface) => interface.to_owned(),
-                None => {
+                .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty())
+                .unwrap_or_else(|| {
                     eprintln!("Could not find any up network interface that has an IP");
                     process::exit(1);
-                }
-            };
+                });
 
             println!("Got network interface : {}", interface.name);
 
-            interface
+            interface.to_owned()
         }
     }
 }

@@ -1,7 +1,7 @@
 use clap::Parser;
 use core::panic;
 use pnet::{
-    datalink::NetworkInterface,
+    datalink::{interfaces, NetworkInterface},
     packet::{
         ip::IpNextHeaderProtocols::Tcp,
         tcp::{ipv4_checksum, ipv6_checksum, MutableTcpPacket, Tcp},
@@ -13,6 +13,8 @@ use pnet::{
 use rand::{thread_rng, Rng};
 use std::process;
 use std::{net::IpAddr, num::ParseIntError};
+
+pub mod threading;
 
 /* ---[Argument Structure]---*/
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
@@ -125,7 +127,7 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) {
     println!("{target} : {opened} ");
 }
 
-fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {
+pub fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {
     interface
         .ips
         .iter()
@@ -190,10 +192,8 @@ fn build_packet<'a>(
     tcp_packet
 }
 
-pub fn get_interface(
-    interface_name: Option<String>,
-    all_interfaces: Vec<NetworkInterface>,
-) -> NetworkInterface {
+pub fn get_interface(interface_name: Option<String>) -> NetworkInterface {
+    let all_interfaces = interfaces();
     match interface_name {
         /*---[Interface name supplied]---*/
         Some(name) => {

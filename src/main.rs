@@ -1,5 +1,4 @@
 use clap::Parser;
-use pnet::datalink::linux::interfaces;
 use rust_scanner::{get_interface, run_syn_scan, Args};
 
 fn main() {
@@ -10,7 +9,7 @@ fn main() {
 
     let target_ips = args.targets;
 
-    let interface = get_interface(args.interface, interfaces());
+    let interface = get_interface(args.interface);
 
     println!("Ports : {:#?}\nIP : {:#?}\n\n", target_ports, target_ips);
 

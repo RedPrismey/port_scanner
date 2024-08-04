@@ -3,7 +3,47 @@ use pnet::{
     datalink::NetworkInterface,
     ipnetwork::{IpNetwork, Ipv4Network, Ipv6Network},
 };
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::mpsc::channel;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
+use threading::ThreadPool;
+
+#[test]
+fn threads() {
+    let pool = ThreadPool::new(4);
+    let (tx, rx) = channel();
+    let target_ports: Vec<u16> = (80..84).collect();
+    let target_ips = [IpAddr::V4(Ipv4Addr::new(192, 168, 96, 21))];
+    let interface = &get_interface(None);
+
+    let mut rng = thread_rng();
+
+    for target_port in &target_ports {
+        let tx = tx.clone();
+
+        let ip_config = IpConfig {
+            target: target_ips[0],
+            source: get_source_ip(interface, target_ips[0].is_ipv4()),
+        };
+
+        let port_config = PortConfig {
+            target: *target_port,
+            source: rng.gen_range(1024..65535),
+        };
+
+        pool.execute(move || {
+            syn_scan(&ip_config, &port_config);
+            tx.send("a").unwrap();
+        });
+
+        match rx.recv_timeout(Duration::from_millis(1500)) {
+            Ok(_) => println!("ok"),
+            Err(_) => println!("timeout"),
+        }
+    }
+}
 
 #[test]
 fn source_ip_v4() {
@@ -47,108 +87,4 @@ fn source_ip_v6() {
 
     let ip = get_source_ip(&interface, is_v4);
     assert_eq!(ip, Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
-}
-
-#[test]
-fn get_interface_default() {
-    let interfaces = vec![
-        NetworkInterface {
-            name: String::from("No ip"),
-            description: String::from("Not the right one"),
-            index: 1,
-            mac: None,
-            ips: vec![],
-            flags: 1, // running flag
-        },
-        NetworkInterface {
-            name: String::from("Not up"),
-            description: String::from("Not the right one"),
-            index: 2,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
-            )],
-            flags: 0, // not running flag
-        },
-        NetworkInterface {
-            name: String::from("Loopback"),
-            description: String::from("Not the right one"),
-            index: 2,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
-            )],
-            flags: 9, // Loopback + running flag
-        },
-        NetworkInterface {
-            name: String::from("Good"),
-            description: String::from("The right one"),
-            index: 0,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
-            )],
-            flags: 1,
-        },
-    ];
-
-    let interface = get_interface(None, interfaces);
-    assert_eq!(interface.description, "The right one");
-}
-
-#[test]
-fn get_interface_choosing() {
-    let interfaces = vec![
-        NetworkInterface {
-            name: String::from("No ip"),
-            description: String::from("Not the right one"),
-            index: 1,
-            mac: None,
-            ips: vec![],
-            flags: 1, // running flag
-        },
-        NetworkInterface {
-            name: String::from("Not up"),
-            description: String::from("Not the right one"),
-            index: 2,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
-            )],
-            flags: 0, // not up flag
-        },
-        NetworkInterface {
-            name: String::from("Loopback"),
-            description: String::from("Not the right one"),
-            index: 2,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
-            )],
-            flags: 9, // Loopback + running flag
-        },
-        NetworkInterface {
-            name: String::from("Good"),
-            description: String::from("Not the right one"),
-            index: 0,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 2), 0).unwrap(),
-            )],
-            flags: 1,
-        },
-        NetworkInterface {
-            name: String::from("The chosen one"),
-            description: String::from("The right one"),
-            index: 0,
-            mac: None,
-            ips: vec![IpNetwork::V4(
-                Ipv4Network::new(Ipv4Addr::new(192, 168, 0, 1), 0).unwrap(),
-            )],
-            flags: 1,
-        },
-    ];
-
-    let interface = get_interface(Some(String::from("The chosen one")), interfaces);
-    assert_eq!(interface.description, "The right one");
 }

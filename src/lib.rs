@@ -11,7 +11,6 @@ use pnet::{
     },
 };
 use rand::{thread_rng, Rng};
-use std::collections::HashMap;
 use std::process;
 use std::{net::IpAddr, num::ParseIntError};
 
@@ -65,13 +64,7 @@ pub struct PortConfig {
     pub source: u16,
 }
 
-pub fn run_syn_scan(
-    target_ips: Vec<IpAddr>,
-    target_ports: Vec<u16>,
-    interface: &NetworkInterface,
-) -> HashMap<String, bool> {
-    let mut results = HashMap::new();
-
+pub fn run_syn_scan(target_ips: Vec<IpAddr>, target_ports: Vec<u16>, interface: &NetworkInterface) {
     /* for the source port generation */
     let mut rng = thread_rng();
 
@@ -87,18 +80,12 @@ pub fn run_syn_scan(
                 source: rng.gen_range(1024..65535),
             };
 
-            let target = format!("{}:{}", target_ip, target_port);
-            let result = syn_scan(&ip_config, &port_config);
-            println!("{target} : {result} ");
-
-            results.insert(target, result);
+            syn_scan(&ip_config, &port_config);
         }
     }
-
-    results
 }
 
-pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
+pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) {
     let mut opened = false;
 
     /*Create the tcp packet*/
@@ -134,7 +121,8 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) -> bool {
         }
     }
 
-    opened
+    let target = format!("{}:{}", ip_config.target, port_config.target);
+    println!("{target} : {opened} ");
 }
 
 fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {

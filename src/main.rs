@@ -15,6 +15,5 @@ fn main() {
     println!("Ports : {:#?}\nIP : {:#?}\n\n", target_ports, target_ips);
 
     /*---[Scan]---*/
-    let _result = run_syn_scan(target_ips, target_ports, &interface);
-    //println!("opened : {:#?}", result);
+    run_syn_scan(target_ips, target_ports, &interface);
 }

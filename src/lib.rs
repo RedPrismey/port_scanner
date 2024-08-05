@@ -11,21 +11,19 @@ use pnet::{
     },
 };
 use rand::{thread_rng, Rng};
-use std::process;
-use std::{net::IpAddr, num::ParseIntError};
+use std::{fmt, net::IpAddr, num::ParseIntError, process, time::Duration};
+use threading::ThreadPool;
 
 pub mod threading;
 
 /* ---[Argument Structure]---*/
 /* Handling arguments with clap (see : https://docs.rs/clap/latest/clap/)
-*  The arguments with no default value are considered required.*/
+*  Arguments with no default value are considered required.*/
 #[derive(Parser, Debug)]
 #[command(version, about)]
-// Description for the help menu of clap below
 /// A simple syn port scanner in rust
 pub struct Args {
     #[arg(short, long, num_args = 1.., value_delimiter = ' ')]
-    //TODO: add support for ip ranges
     pub targets: Vec<IpAddr>,
 
     #[arg(short, long, value_parser = port_parser, num_args = 1.., value_delimiter = ' ')]
@@ -45,7 +43,6 @@ fn port_parser(s: &str) -> Result<Vec<u16>, ParseIntError> {
 
         Ok((first..last).collect())
     } else {
-        /* If there's only one port, return it as a Vec containing this one port */
         let port = s.parse::<u16>();
 
         match port {
@@ -55,7 +52,25 @@ fn port_parser(s: &str) -> Result<Vec<u16>, ParseIntError> {
     }
 }
 
+/*---[Result enum]---*/
+pub enum PortState {
+    Opened,
+    Closed,
+    Filtered,
+}
+
+impl fmt::Display for PortState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PortState::Opened => write!(f, "opened"),
+            PortState::Closed => write!(f, "closed"),
+            PortState::Filtered => write!(f, "filtered"),
+        }
+    }
+}
+
 /*---[Config structures]---*/
+#[derive(Clone)]
 pub struct IpConfig {
     pub target: IpAddr,
     pub source: IpAddr,
@@ -70,6 +85,8 @@ pub fn run_syn_scan(target_ips: Vec<IpAddr>, target_ports: Vec<u16>, interface: 
     /* for the source port generation */
     let mut rng = thread_rng();
 
+    let pool = ThreadPool::new(4);
+
     for target_ip in target_ips {
         let ip_config = IpConfig {
             target: target_ip,
@@ -77,18 +94,21 @@ pub fn run_syn_scan(target_ips: Vec<IpAddr>, target_ports: Vec<u16>, interface: 
         };
 
         for target_port in &target_ports {
+            let ip_config = ip_config.clone();
             let port_config = PortConfig {
                 target: *target_port,
                 source: rng.gen_range(1024..65535),
             };
 
-            syn_scan(&ip_config, &port_config);
+            pool.execute(move || {
+                syn_scan(&ip_config, &port_config);
+            });
         }
     }
 }
 
 pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) {
-    let mut opened = false;
+    let mut result = PortState::Closed;
 
     /*Create the tcp packet*/
     let mut syn_buffer = [0; 20];
@@ -107,14 +127,17 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) {
 
     /*---[Packet receiving]---*/
     let mut iter = tcp_packet_iter(&mut rx);
-    //TODO: add a timeout
     loop {
-        match iter.next() {
-            Ok((packet, addr)) => {
+        match iter.next_with_timeout(Duration::from_secs(5)) {
+            Ok(None) => {
+                result = PortState::Filtered;
+                break;
+            }
+            Ok(Some((packet, addr))) => {
                 if addr == ip_config.target && packet.get_source() == port_config.target {
-                    /* Check if RST is set */
+                    /* Check if RST is not set */
                     if packet.get_flags() & 0b00000100 == 0 {
-                        opened = true;
+                        result = PortState::Opened;
                     }
                     break;
                 }
@@ -124,7 +147,7 @@ pub fn syn_scan(ip_config: &IpConfig, port_config: &PortConfig) {
     }
 
     let target = format!("{}:{}", ip_config.target, port_config.target);
-    println!("{target} : {opened} ");
+    println!("{target} : {result} ");
 }
 
 pub fn get_source_ip(interface: &NetworkInterface, is_v4: bool) -> IpAddr {

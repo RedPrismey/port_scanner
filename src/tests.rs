@@ -3,47 +3,7 @@ use pnet::{
     datalink::NetworkInterface,
     ipnetwork::{IpNetwork, Ipv4Network, Ipv6Network},
 };
-use std::sync::mpsc::channel;
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    time::Duration,
-};
-use threading::ThreadPool;
-
-#[test]
-fn threads() {
-    let pool = ThreadPool::new(4);
-    let (tx, rx) = channel();
-    let target_ports: Vec<u16> = (80..84).collect();
-    let target_ips = [IpAddr::V4(Ipv4Addr::new(192, 168, 96, 21))];
-    let interface = &get_interface(None);
-
-    let mut rng = thread_rng();
-
-    for target_port in &target_ports {
-        let tx = tx.clone();
-
-        let ip_config = IpConfig {
-            target: target_ips[0],
-            source: get_source_ip(interface, target_ips[0].is_ipv4()),
-        };
-
-        let port_config = PortConfig {
-            target: *target_port,
-            source: rng.gen_range(1024..65535),
-        };
-
-        pool.execute(move || {
-            syn_scan(&ip_config, &port_config);
-            tx.send("a").unwrap();
-        });
-
-        match rx.recv_timeout(Duration::from_millis(1500)) {
-            Ok(_) => println!("ok"),
-            Err(_) => println!("timeout"),
-        }
-    }
-}
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 #[test]
 fn source_ip_v4() {
